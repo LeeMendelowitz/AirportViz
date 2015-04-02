@@ -8,14 +8,14 @@
 <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap-theme.min.css">
 
-<link rel="stylesheet" href="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/nvd3/nv.d3.css">
+<link rel="stylesheet" href="assets/nv.d3.css">
 
 <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.15/angular.min.js"></script>
 <!-- <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script> -->
-<script src="http://samu.github.io/angular-table/js/angular-table.min.js"></script>
-<script src="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/d3/d3.min.js"></script>
-<script src="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/nvd3/nv.d3.min.js"></script>
-<script src="http://cmaurer.github.io/angularjs-nvd3-directives/lib/angularjs-nvd3-directives/dist/angularjs-nvd3-directives.js"></script>
+<script src="assets/angular-table.min.js"></script>
+<script src="assets/d3.min.js"></script>
+<script src="assets/nv.d3.min.js"></script>
+<script src="assets/angularjs-nvd3-directives.js"></script>
 
 <style>
 .nvtooltip {
@@ -137,7 +137,7 @@ var app = angular.module('myApp', [
   "angular-table", 'nvd3ChartDirectives'
 ]);
 
-app.factory('DataManager', function($rootScope, $http, $q, Entry) {
+app.factory('DataManager', function($rootScope, $http, $q, $window, Entry) {
 
   var data = [];
   var api = {};
@@ -156,19 +156,19 @@ app.factory('DataManager', function($rootScope, $http, $q, Entry) {
       deferred.resolve(data);
     }
 
-    // var url ="https://gist.githubusercontent.com/LeeMendelowitz/92f5f5ef09faaa76f8d0/raw/3d007ebb1bbf0a226d1f0a097d968b89f2796adb/comments.csv";
-    var url = "https://gist.githubusercontent.com/LeeMendelowitz/92f5f5ef09faaa76f8d0/raw/0bf6ebbfa0d79568247240fbfb4571351b1cb9f2/response.for.site.csv";
+    var url = "data/response.for.site.csv";
     $http.get(url).success(function(d, status, headers, config) {
 
       data = CSVToArray(d).map(function(e) { return new Entry(e); });
       data = data.slice(1);
       $rootScope.haveData = true;
       get_data_deferred.resolve(data);
-      console.log("got data: ", data);
+      // console.log("got data: ", data);
 
 
     }).error(function() { 
       console.log("Error getting data");
+      $window.alert("Error getting data!");
       get_data_deferred = undefined;
       $rootScope.have_data = false;
     });
@@ -201,46 +201,93 @@ app.controller("RandomResponseCtrl", function($scope, DataManager, $filter, $tim
 
   $scope.full_responses = [];
   $scope.curResponse = {};
+  $scope.curInd = 0;
 
   DataManager.get_data().then( function(data) {
     $scope.full_responses = data.filter(function(e) { return e.reason && e.reason.length && e.reason.length > 1; });
-    $scope.genRandomResponse();
+    $scope.shuffleResponses();
+    $scope.curResponse = $scope.full_responses && $scope.full_responses[$scope.curInd];
   });
 
-  $scope.genRandomResponse = function() {
+  $scope.shuffleResponses = function() {
+    
+    function shuffle(o){ //v1.0
+      for(var j, x, i = o.length; i; j = Math.floor(Math.random() * i), x = o[--i], o[i] = o[j], o[j] = x);
+      return o;
+    };
 
-    var ind = Math.floor(Math.random() * $scope.full_responses.length);
-    $scope.curResponse = $scope.full_responses[ind];
+    $scope.full_responses = shuffle($scope.full_responses);
 
   };
+
+  $scope.next = function() {
+
+    if(!$scope.full_responses) {
+      return;
+    }
+
+    $scope.curInd += 1;
+
+    if ($scope.curInd > $scope.full_responses.length) {
+      $scope.curInd = 0;
+    }
+
+    $scope.curResponse = $scope.full_responses && $scope.full_responses[$scope.curInd];
+
+  };
+
+  $scope.prev = function() {
+
+    if(!$scope.full_responses) {
+      return;
+    }
+
+    $scope.curInd -= 1;
+
+    if ($scope.curInd < 0) {
+      $scope.curInd = $scope.full_responses.length > 0 ? $scope.full_responses.length - 1 : 0;
+    }
+
+    $scope.curResponse = $scope.full_responses && $scope.full_responses[$scope.curInd];
+
+  };  
 
 });
 
-app.controller("SearchCtrl", function($scope, DataManager, $filter, $timeout) {
+app.controller("SearchCtrl", function($scope, DataManager, $filter, $timeout, $location) {
 
   $scope.matches = [];
   $scope.query = "";
-  $scope.searchReason = true;
 
-  var t = undefined;
-
+  var cur_timeout = undefined;
 
   $scope.counts = [];
 
-  var filterFunction = function(entry) {
-    var keep = false;
-    if(scope.searchAnswer) {
+  // Defaults:
+  $scope.searchReason = true;
+  $scope.searchAnswer = false;
 
-    }
+  // Parse the url 
+  var urlSearch = $location.search();
+  
+  if (urlSearch.hasOwnProperty('searchAnswer')) {
+    $scope.searchAnswer = urlSearch.searchAnswer == 1;
+  }
 
-  };
+  if (urlSearch.hasOwnProperty('searchReason')) {
+    $scope.searchReason = urlSearch.searchReason == 1;
+  }
+
+  if (urlSearch.hasOwnProperty('query')) {
+    $scope.query = urlSearch.query;
+  }
 
   var updateMatches = function() {
 
     // Restart
-    $timeout.cancel(t);
+    $timeout.cancel(cur_timeout);
 
-    t = $timeout(function() {
+    cur_timeout = $timeout(function() {
 
       // Build the search criteria
       var criteria = {};
@@ -264,9 +311,11 @@ app.controller("SearchCtrl", function($scope, DataManager, $filter, $timeout) {
 
       var mm = $filter('filter')($scope.data, filterFunction) || [];
 
-      console.log("Have matches!", mm);
+      // console.log("Have matches!", mm);
       countAnswers(mm);
       $scope.matches = mm;
+
+      $location.path('/').search({query: $scope.query, searchAnswer: $scope.searchAnswer ? 1 : 0, searchReason: $scope.searchReason ? 1 : 0})
 
 
     }, 300);
@@ -310,7 +359,7 @@ app.controller("SearchCtrl", function($scope, DataManager, $filter, $timeout) {
     }
 
 
-    console.log("Counts: ", $scope.counts, $scope.total);
+    // console.log("Counts: ", $scope.counts, $scope.total);
     return counts_array;
 
   }
@@ -483,7 +532,7 @@ app.run(function($rootScope, DataManager) {
               </thead>
               <tbody>
                 <tr>
-                  <td at-implicit at-attribute="answer" at-title="Answer"></td>
+                  <td at-implicit at-attribute="answer" at-title="AirportName"></td>
                   <td at-implicit at-attribute="gender" at-title="Gender"></td>
                   <td at-implicit at-attribute="birth_year" at-title="BirthYear"></td>
                   <td at-implicit at-attribute="party" at-title="Party"></td>
@@ -504,11 +553,12 @@ app.run(function($rootScope, DataManager) {
 
       </div>
 
-      <div class="col-md-2">
-        <button class="btn btn-lg btn-primary" ng-click="genRandomResponse()">Go!</button>
+      <div class="col-md-3">
+        <button class="btn btn-md btn-primary" ng-click="prev()"><span class="glyphicon glyphicon-backward"></span> Back</button>
+         <button class="btn btn-md btn-success" ng-click="next()">Forward <span class="glyphicon glyphicon-forward"></span></button>
       </div>
 
-      <div class="col-md-10">
+      <div class="col-md-9">
         <table class="table table-bordered table-condensed">
           <tbody>
             <tr>
