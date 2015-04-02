@@ -1,0 +1,398 @@
+<html>
+
+
+
+<head>
+
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css">
+
+
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap-theme.min.css">
+<link rel="stylesheet" href="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/nvd3/nv.d3.css">
+
+<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.15/angular.min.js"></script>
+<!-- <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script> -->
+<script src="http://samu.github.io/angular-table/js/angular-table.min.js"></script>
+<script src="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/d3/d3.min.js"></script>
+<script src="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/nvd3/nv.d3.min.js"></script>
+<script src="http://cmaurer.github.io/angularjs-nvd3-directives/lib/angularjs-nvd3-directives/dist/angularjs-nvd3-directives.js"></script>
+
+<script type="text/javascript">
+
+    // ref: http://stackoverflow.com/a/1293163/2343
+    // This will parse a delimited string into an array of
+    // arrays. The default delimiter is the comma, but this
+    // can be overriden in the second argument.
+    function CSVToArray( strData, strDelimiter ){
+        // Check to see if the delimiter is defined. If not,
+        // then default to comma.
+        strDelimiter = (strDelimiter || ",");
+
+        // Create a regular expression to parse the CSV values.
+        var objPattern = new RegExp(
+            (
+                // Delimiters.
+                "(\\" + strDelimiter + "|\\r?\\n|\\r|^)" +
+
+                // Quoted fields.
+                "(?:\"([^\"]*(?:\"\"[^\"]*)*)\"|" +
+
+                // Standard fields.
+                "([^\"\\" + strDelimiter + "\\r\\n]*))"
+            ),
+            "gi"
+            );
+
+
+        // Create an array to hold our data. Give the array
+        // a default empty first row.
+        var arrData = [[]];
+
+        // Create an array to hold our individual pattern
+        // matching groups.
+        var arrMatches = null;
+
+
+        // Keep looping over the regular expression matches
+        // until we can no longer find a match.
+        while (arrMatches = objPattern.exec( strData )){
+
+            // Get the delimiter that was found.
+            var strMatchedDelimiter = arrMatches[ 1 ];
+
+            // Check to see if the given delimiter has a length
+            // (is not the start of string) and if it matches
+            // field delimiter. If id does not, then we know
+            // that this delimiter is a row delimiter.
+            if (
+                strMatchedDelimiter.length &&
+                strMatchedDelimiter !== strDelimiter
+                ){
+
+                // Since we have reached a new row of data,
+                // add an empty row to our data array.
+                arrData.push( [] );
+
+            }
+
+            var strMatchedValue;
+
+            // Now that we have our delimiter out of the way,
+            // let's check to see which kind of value we
+            // captured (quoted or unquoted).
+            if (arrMatches[ 2 ]){
+
+                // We found a quoted value. When we capture
+                // this value, unescape any double quotes.
+                strMatchedValue = arrMatches[ 2 ].replace(
+                    new RegExp( "\"\"", "g" ),
+                    "\""
+                    );
+
+            } else {
+
+                // We found a non-quoted value.
+                strMatchedValue = arrMatches[ 3 ];
+
+            }
+
+
+            // Now that we have our value string, let's add
+            // it to the data array.
+            arrData[ arrData.length - 1 ].push( strMatchedValue );
+        }
+
+        // Return the parsed data.
+        return( arrData );
+    }
+
+</script>
+
+<script>
+var app = angular.module('myApp', [
+  "angular-table", 'nvd3ChartDirectives'
+]);
+
+app.factory('DataManager', function($http, $q, Entry) {
+
+  var data = [];
+  var api = {};
+
+  api.get_data = function() {
+
+    var deferred = $q.defer();
+
+    if(data && data.length > 0) {
+      deferred.resolve(data);
+    }
+
+    // var url ="https://gist.githubusercontent.com/LeeMendelowitz/92f5f5ef09faaa76f8d0/raw/3d007ebb1bbf0a226d1f0a097d968b89f2796adb/comments.csv";
+    var url = "https://gist.githubusercontent.com/LeeMendelowitz/92f5f5ef09faaa76f8d0/raw/0bf6ebbfa0d79568247240fbfb4571351b1cb9f2/response.for.site.csv";
+    $http.get(url).success(function(d, status, headers, config) {
+      data = CSVToArray(d).map(function(e) { return new Entry(e); });
+      data = data.slice(1);
+      deferred.resolve(data);
+      console.log("got data: ", data);
+    }).error(function() { 
+      console.log("Error getting data");
+    });
+
+    return deferred.promise;
+
+  };
+
+  return api;
+
+});
+
+app.factory('Entry', function() {
+
+  var Entry = function(d) {
+
+    this.answer = d[0];
+    this.birth_year = d[1];
+    this.gender = d[2];
+    this.party  = d[3];
+    this.comment = d[4];
+
+  }
+
+  return Entry;
+
+});
+
+
+app.controller("MyController", function($scope, DataManager, $filter, $timeout) {
+
+  $scope.matches = [];
+  $scope.searchText = "";
+
+  var t = undefined;
+
+
+  $scope.counts = [];
+
+  var updateMatches = function() {
+    // Restart
+    $timeout.cancel(t);
+    t = $timeout(function() {
+      var mm = $filter('filter')($scope.data, {comment: $scope.searchText}, false);
+      if(mm && mm.length && mm.length > 0) {
+        $scope.matches = mm;
+      } else {
+        $scope.matches = [];
+      }
+      
+      console.log("Have matches!", $scope.matches);
+      $scope.counts = countAnswers($scope.matches);
+
+      // Loop over the counts to produce total
+      $scope.total = 0;
+      for(var i = 0; i < $scope.counts.length; i++) {
+        $scope.total += $scope.counts[i].value;
+      }
+
+      console.log("Counts: ", $scope.counts, $scope.total);
+
+    }, 300);
+  };
+
+  var countAnswers = function(matches) {
+    var counts = {};
+    var a, i;
+    for(i = 0; i < matches.length; i++) {
+      a = matches[i].answer;
+      if(counts.hasOwnProperty(a)) {
+        counts[a] += 1;
+      } else {
+        counts[a] = 1;
+      }
+    }
+
+    var counts_array = [];
+    angular.forEach(counts, function(value, key) {
+      counts_array.push({key: key, value: value});
+    });
+
+    // DEBUG
+    // counts_array = counts_array.slice(0, 10);
+
+    return counts_array;
+
+  }
+
+  DataManager.get_data().then(updateMatches);
+
+  $scope.$watch("searchText", updateMatches);
+
+  $scope.tableConfig = {
+    itemsPerPage: 10,
+    fillLastPage: false,
+    maxPages: 5
+  };
+
+
+  $scope.xFunction = function () {
+    return function(d) { return d.key; };
+  };
+
+  $scope.yFunction = function() {
+    return function(d) { return d.value; };
+  };
+
+  $scope.toolTipContentFunction = function(){
+    return function(key, x, y, e, graph) {
+        console.log(key, x, y, e, graph);
+        return '<h4>' + key + '</h4>' +
+               $filter("number")(x, 0) + ' (' + $filter('number')(x/$scope.total*100, 2) + '%) </p>'
+    }
+  };
+
+
+});
+
+// app.controller("ExampleCtrl", function($scope, $timeout) {
+//   $scope.exampleData = [
+//        { key: "One", y: 5 },
+//           { key: "Two", y: 2 },
+//           { key: "Three", y: 9 },
+//           { key: "Four", y: 7 },
+//           { key: "Five", y: 4 },
+//           { key: "Six", y: 3 },
+//           { key: "Seven", y: 9 }
+//      ];
+
+//   $timeout(function() {
+//     $scope.exampleData = [
+//       {key: "Lee", y: 10},
+//       {key: "Joe", y: 15}
+//     ];
+//     console.log("BOOM!", $scope.exampleData);
+
+//   }, 2000);
+
+
+//   $scope.xFunction = function(){
+//       return function(d) {
+//           return d.key;
+//     };
+//   };
+
+//   $scope.yFunction = function(){
+//     return function(d){
+//       return d.y;
+//     };
+//   };
+
+// });
+
+app.run(function($rootScope, DataManager) {
+
+  $rootScope.matches = [];
+  DataManager.get_data().then(function(data) {
+    $rootScope.data = data;
+  });
+
+});
+
+</script>
+
+
+</head>
+
+<body ng-app="myApp">
+
+
+<div class="container-fluid">
+
+
+  <h1>Washington Post Airport Survey</h1>
+
+  <p>
+
+    The results of the Washington Post's <a href="http://www.washingtonpost.com/express/wp/2015/03/31/national-reagan-dca-17-years-later-locals-still-cant-agree-on-the-name-of-the-airport-in-question/?wprss=rss_traffic" target="_blank"> Airport Survey</a> are out. There was a free form comment box and
+    as we know the Internet is a mean place. Check out what people had to say about "the airport in Northern Virginia that's not Dulles."
+
+  <p>
+
+  </p>
+
+    Have fun!
+
+  </p>
+
+  <h2>If you wish tell us why you call the airport in question what you call it.</h2>
+
+  <div ng-controller="MyController">
+
+    <input type="text" ng-model="searchText">
+
+    <p>Have {{ matches.length | number }} matches.</p>
+
+
+    <div class="row">
+
+      <div class="col-md-3">
+        <nvd3-pie-chart
+          data="counts"
+            id="exampleId"
+            width="300"
+            height="300"
+            x="xFunction()"
+            y="yFunction()"
+            showLabels="true"
+            tooltips="true"
+            tooltipcontent="toolTipContentFunction()">
+            <svg></svg>
+
+        </nvd3-pie-chart>
+      </div>
+
+      <div class="col-md-9">
+
+        <table at-table at-list="matches" at-paginated at-config="tableConfig" class="table table-bordered">
+        <thead></thead>
+        <tbody>
+          <tr>
+            <td at-implicit at-attribute="answer"></td>
+            <td at-implicit at-attribute="gender"></td>
+            <td at-implicit at-attribute="birth_year"></td>
+            <td at-implicit at-attribute="party"></td>
+            <td at-implicit at-attribute="comment"></td>
+          </tr>
+        </tbody>
+        </table>
+
+        <at-pagination at-list="matches" at-config="tableConfig"></at-pagination>
+
+      </div>
+
+   </div> <!-- end row -->
+
+
+  </div>
+
+<!-- 
+  <div ng-controller="ExampleCtrl">
+    <nvd3-pie-chart
+        data="exampleData"
+          id="exampleId2"
+          width="550"
+          height="350"
+          x="xFunction()"
+          y="yFunction()"
+          showLabels="true">
+          <svg></svg>
+    </nvd3-pie-chart>
+  </div>
+ -->
+
+</div>
+
+
+
+</body>
+
+</html>
