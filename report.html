@@ -6,10 +6,8 @@
 
 
 <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css">
-
-
-
 <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap-theme.min.css">
+
 <link rel="stylesheet" href="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/nvd3/nv.d3.css">
 
 <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.15/angular.min.js"></script>
@@ -18,6 +16,30 @@
 <script src="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/d3/d3.min.js"></script>
 <script src="http://angularjs-nvd3-directives.github.io/angularjs-nvd3-directives/lib/nvd3/nv.d3.min.js"></script>
 <script src="http://cmaurer.github.io/angularjs-nvd3-directives/lib/angularjs-nvd3-directives/dist/angularjs-nvd3-directives.js"></script>
+
+<style>
+.nvtooltip {
+  position: absolute;
+  background-color: rgba(255,255,255,0.5);
+  padding: 2px;
+  border: 1px solid rgba(0,0,0,.2);
+  z-index: 10000;
+
+  font-family: Arial;
+  font-size: 13px;
+  text-align: left;
+  pointer-events: none;
+
+  white-space: nowrap;
+
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+</style>
 
 <script type="text/javascript">
 
@@ -115,14 +137,20 @@ var app = angular.module('myApp', [
   "angular-table", 'nvd3ChartDirectives'
 ]);
 
-app.factory('DataManager', function($http, $q, Entry) {
+app.factory('DataManager', function($rootScope, $http, $q, Entry) {
 
   var data = [];
   var api = {};
 
+  var get_data_deferred;
+
   api.get_data = function() {
 
-    var deferred = $q.defer();
+    if (get_data_deferred) {
+      return get_data_deferred.promise;
+    }
+
+    get_data_deferred = $q.defer();
 
     if(data && data.length > 0) {
       deferred.resolve(data);
@@ -131,15 +159,21 @@ app.factory('DataManager', function($http, $q, Entry) {
     // var url ="https://gist.githubusercontent.com/LeeMendelowitz/92f5f5ef09faaa76f8d0/raw/3d007ebb1bbf0a226d1f0a097d968b89f2796adb/comments.csv";
     var url = "https://gist.githubusercontent.com/LeeMendelowitz/92f5f5ef09faaa76f8d0/raw/0bf6ebbfa0d79568247240fbfb4571351b1cb9f2/response.for.site.csv";
     $http.get(url).success(function(d, status, headers, config) {
+
       data = CSVToArray(d).map(function(e) { return new Entry(e); });
       data = data.slice(1);
-      deferred.resolve(data);
+      $rootScope.haveData = true;
+      get_data_deferred.resolve(data);
       console.log("got data: ", data);
+
+
     }).error(function() { 
       console.log("Error getting data");
+      get_data_deferred = undefined;
+      $rootScope.have_data = false;
     });
 
-    return deferred.promise;
+    return get_data_deferred.promise;
 
   };
 
@@ -155,7 +189,7 @@ app.factory('Entry', function() {
     this.birth_year = d[1];
     this.gender = d[2];
     this.party  = d[3];
-    this.comment = d[4];
+    this.reason = d[4];
 
   }
 
@@ -163,45 +197,93 @@ app.factory('Entry', function() {
 
 });
 
+app.controller("RandomResponseCtrl", function($scope, DataManager, $filter, $timeout) {
 
-app.controller("MyController", function($scope, DataManager, $filter, $timeout) {
+  $scope.full_responses = [];
+  $scope.curResponse = {};
+
+  DataManager.get_data().then( function(data) {
+    $scope.full_responses = data.filter(function(e) { return e.reason && e.reason.length && e.reason.length > 1; });
+    $scope.genRandomResponse();
+  });
+
+  $scope.genRandomResponse = function() {
+
+    var ind = Math.floor(Math.random() * $scope.full_responses.length);
+    $scope.curResponse = $scope.full_responses[ind];
+
+  };
+
+});
+
+app.controller("SearchCtrl", function($scope, DataManager, $filter, $timeout) {
 
   $scope.matches = [];
-  $scope.searchText = "";
+  $scope.query = "";
+  $scope.searchReason = true;
 
   var t = undefined;
 
 
   $scope.counts = [];
 
+  var filterFunction = function(entry) {
+    var keep = false;
+    if(scope.searchAnswer) {
+
+    }
+
+  };
+
   var updateMatches = function() {
+
     // Restart
     $timeout.cancel(t);
+
     t = $timeout(function() {
-      var mm = $filter('filter')($scope.data, {comment: $scope.searchText}, false);
-      if(mm && mm.length && mm.length > 0) {
-        $scope.matches = mm;
-      } else {
-        $scope.matches = [];
-      }
-      
-      console.log("Have matches!", $scope.matches);
-      $scope.counts = countAnswers($scope.matches);
 
-      // Loop over the counts to produce total
-      $scope.total = 0;
-      for(var i = 0; i < $scope.counts.length; i++) {
-        $scope.total += $scope.counts[i].value;
+      // Build the search criteria
+      var criteria = {};
+
+      if($scope.searchAnswer) {
+        criteria['answer'] = $scope.query;
       }
 
-      console.log("Counts: ", $scope.counts, $scope.total);
+      if($scope.searchReason) {
+        criteria['reason'] = $scope.query;
+      }
+
+      var re = new RegExp($scope.query, "i");
+
+      var filterFunction = function(entry, index) {
+        var ret = false;
+        ret = ret || ($scope.searchAnswer && re.test(entry.answer));
+        ret = ret || ($scope.searchReason && re.test(entry.reason));
+        return ret; 
+      }
+
+      var mm = $filter('filter')($scope.data, filterFunction) || [];
+
+      console.log("Have matches!", mm);
+      countAnswers(mm);
+      $scope.matches = mm;
+
 
     }, 300);
+
   };
 
   var countAnswers = function(matches) {
+
     var counts = {};
     var a, i;
+
+    if(!matches) {
+      $scope.total = 0;
+      $scope.counts = [];
+      return;
+    }
+
     for(i = 0; i < matches.length; i++) {
       a = matches[i].answer;
       if(counts.hasOwnProperty(a)) {
@@ -216,16 +298,28 @@ app.controller("MyController", function($scope, DataManager, $filter, $timeout) 
       counts_array.push({key: key, value: value});
     });
 
+
     // DEBUG
     // counts_array = counts_array.slice(0, 10);
+    $scope.counts = counts_array;
 
+    // Loop over the counts to produce total
+    $scope.total = 0;
+    for(var i = 0; i < $scope.counts.length; i++) {
+      $scope.total += $scope.counts[i].value;
+    }
+
+
+    console.log("Counts: ", $scope.counts, $scope.total);
     return counts_array;
 
   }
 
   DataManager.get_data().then(updateMatches);
 
-  $scope.$watch("searchText", updateMatches);
+  $scope.$watch("query", updateMatches);
+  $scope.$watch("searchReason", updateMatches);
+  $scope.$watch("searchAnswer", updateMatches);
 
   $scope.tableConfig = {
     itemsPerPage: 10,
@@ -235,64 +329,39 @@ app.controller("MyController", function($scope, DataManager, $filter, $timeout) 
 
 
   $scope.xFunction = function () {
-    return function(d) { return d.key; };
+    return function(d) { 
+      return d.key; 
+    };
   };
 
   $scope.yFunction = function() {
-    return function(d) { return d.value; };
+    return function(d) { 
+      return d.value; 
+    };
   };
 
   $scope.toolTipContentFunction = function(){
     return function(key, x, y, e, graph) {
-        console.log(key, x, y, e, graph);
-        return '<h4>' + key + '</h4>' +
-               $filter("number")(x, 0) + ' (' + $filter('number')(x/$scope.total*100, 2) + '%) </p>'
-    }
+        var count = y.value;
+        return '<div style="padding: 2px; background-color: rgba(255, 255, 255, 0.8);">' +
+               '<h4>' + key + '</h4>' +
+               '<p>Count: ' + $filter("number")(count, 0) + 
+               ' (' + $filter('number')(count/$scope.total*100, 1) + '%) </p>' +
+               '</div>';
+    };
   };
 
 
 });
 
-// app.controller("ExampleCtrl", function($scope, $timeout) {
-//   $scope.exampleData = [
-//        { key: "One", y: 5 },
-//           { key: "Two", y: 2 },
-//           { key: "Three", y: 9 },
-//           { key: "Four", y: 7 },
-//           { key: "Five", y: 4 },
-//           { key: "Six", y: 3 },
-//           { key: "Seven", y: 9 }
-//      ];
-
-//   $timeout(function() {
-//     $scope.exampleData = [
-//       {key: "Lee", y: 10},
-//       {key: "Joe", y: 15}
-//     ];
-//     console.log("BOOM!", $scope.exampleData);
-
-//   }, 2000);
-
-
-//   $scope.xFunction = function(){
-//       return function(d) {
-//           return d.key;
-//     };
-//   };
-
-//   $scope.yFunction = function(){
-//     return function(d){
-//       return d.y;
-//     };
-//   };
-
-// });
 
 app.run(function($rootScope, DataManager) {
 
   $rootScope.matches = [];
+  $rootScope.haveData = false;
   DataManager.get_data().then(function(data) {
     $rootScope.data = data;
+    $rootScope.haveData = true;
   });
 
 });
@@ -305,92 +374,203 @@ app.run(function($rootScope, DataManager) {
 <body ng-app="myApp">
 
 
-<div class="container-fluid">
+<div class="container">
 
 
-  <h1>Washington Post Airport Survey</h1>
+  <div class="row">
 
-  <p>
+    <div class="col-xs-12">
+      <h1>Washington Post Airport Survey</h1>
 
-    The results of the Washington Post's <a href="http://www.washingtonpost.com/express/wp/2015/03/31/national-reagan-dca-17-years-later-locals-still-cant-agree-on-the-name-of-the-airport-in-question/?wprss=rss_traffic" target="_blank"> Airport Survey</a> are out. There was a free form comment box and
-    as we know the Internet is a mean place. Check out what people had to say about "the airport in Northern Virginia that's not Dulles."
+      <p>
 
-  <p>
+        The results of the Washington Post's <a href="http://www.washingtonpost.com/express/wp/2015/03/31/national-reagan-dca-17-years-later-locals-still-cant-agree-on-the-name-of-the-airport-in-question/?wprss=rss_traffic" target="_blank"> Airport Survey</a> are out!
+      </p>
 
-  </p>
+      <p>The survey asked respondents to explain how they refer to "the airport in Northern Virginia that's not Dulles".
+      Respondents could choose from a list of "DCA", "National", "Reagan", "Reagan National",
+      or provide their own answer.
+      </p>
 
-    Have fun!
+      <p>
+      Respondents also provided their birth year, gender, party affiliation, and
+      a reason for why they call the airport they way they do.
 
-  </p>
+      <p>Have fun!</p>
 
-  <h2>If you wish tell us why you call the airport in question what you call it.</h2>
+      <p class="text-danger">WARNING: This site contains unfiltered survery responses and contains
+      vulgar and potentially hateful content. Use at your own risk.</p>
+      </p>
 
-  <div ng-controller="MyController">
+      <a href="https://twitter.com/share" class="twitter-share-button" data-url="goo.gl/OXR9Ly" data-text="goo.gl/OXR9Ly #DataViz by @lmendy7 @dorageh">Tweet</a>
 
-    <input type="text" ng-model="searchText">
+      
+    </div>
 
-    <p>Have {{ matches.length | number }} matches.</p>
+  </div>
 
 
-    <div class="row">
+  <div ng-hide="haveData">
 
-      <div class="col-md-3">
-        <nvd3-pie-chart
-          data="counts"
-            id="exampleId"
-            width="300"
-            height="300"
-            x="xFunction()"
-            y="yFunction()"
-            showLabels="true"
-            tooltips="true"
-            tooltipcontent="toolTipContentFunction()">
-            <svg></svg>
+    <div class="col-xs-12">
+      Loading Data...
 
-        </nvd3-pie-chart>
+      <div class="progress">
+        <div class="progress-bar progress-bar-striped active"
+        role="progressbar" aria-valuenow="45" aria-valuemin="0" aria-valuemax="100"
+        style="width: 45%">
+        </div>
       </div>
 
-      <div class="col-md-9">
+    </div>
+  </div>
 
-        <table at-table at-list="matches" at-paginated at-config="tableConfig" class="table table-bordered">
-        <thead></thead>
-        <tbody>
-          <tr>
-            <td at-implicit at-attribute="answer"></td>
-            <td at-implicit at-attribute="gender"></td>
-            <td at-implicit at-attribute="birth_year"></td>
-            <td at-implicit at-attribute="party"></td>
-            <td at-implicit at-attribute="comment"></td>
-          </tr>
-        </tbody>
+  <div ng-show="haveData">
+
+
+    <div class="row" ng-controller="SearchCtrl">
+
+      <div class="col-xs-12">
+
+        <h2>Search</h2>
+
+        <form class="form-inline">
+
+          <div class="form-group">
+            <label class="sr-only" for="searchQuery">Query</label>
+            <input type="text" class="form-control" id="searchQuery" ng-model="query" placeholder="Search terms">
+          </div>
+
+          <div class="checkbox">
+            <label>
+              <input type="checkbox" ng-model="searchAnswer"> Airport Name
+            </label>
+          </div>
+
+          <div class="checkbox">
+            <label>
+              <input type="checkbox" ng-model="searchReason"> Reason
+            </label>
+          </div>
+
+        </form>
+
+        <p>Have {{ matches.length | number }} matches.</p>
+
+      </div>
+
+
+
+          <div class="col-md-4" style="max-height: 400px; overflow: auto;">
+            <nvd3-pie-chart
+              data="counts"
+                id="exampleId"
+                width="300"
+                height="300"
+                x="xFunction()"
+                y="yFunction()"
+                showLabels="true"
+                tooltips="true"
+                tooltipcontent="toolTipContentFunction()">
+                <svg></svg>
+            </nvd3-pie-chart>
+          </div>
+
+          <div class="col-md-8">
+            <at-pagination at-list="matches" at-config="tableConfig"></at-pagination>
+            <table at-table at-list="matches" at-paginated at-config="tableConfig" class="table table-bordered">
+              <thead>
+              </thead>
+              <tbody>
+                <tr>
+                  <td at-implicit at-attribute="answer" at-title="Answer"></td>
+                  <td at-implicit at-attribute="gender" at-title="Gender"></td>
+                  <td at-implicit at-attribute="birth_year" at-title="BirthYear"></td>
+                  <td at-implicit at-attribute="party" at-title="Party"></td>
+                  <td at-implicit at-attribute="reason" at-title="Reason"></td>
+                </tr>
+              </tbody>
+            </table>
+            
+          </div>
+
+
+    </div>
+
+    <div ng-controller="RandomResponseCtrl">
+      <div class="col-xs-12">
+
+        <h2>Random Answer Generator</h2>
+
+      </div>
+
+      <div class="col-md-2">
+        <button class="btn btn-lg btn-primary" ng-click="genRandomResponse()">Go!</button>
+      </div>
+
+      <div class="col-md-10">
+        <table class="table table-bordered table-condensed">
+          <tbody>
+            <tr>
+              <th>Answer</th>
+              <td>{{ curResponse.answer}}</td>
+            </tr>
+            <tr>
+              <th>BirthYear</th>
+              <td>{{ curResponse.birth_year}}</td>
+            </tr>
+            <tr>
+              <th>Gender</th>
+              <td>{{ curResponse.gender}}</td>
+            </tr>
+            <tr>
+              <th>Party</th>
+              <td>{{ curResponse.party}}</td>
+            </tr>
+            <tr>
+              <th>Reason</th>
+              <td>{{ curResponse.reason}}</td>
+            </tr>                                       
+          </tbody>
         </table>
 
-        <at-pagination at-list="matches" at-config="tableConfig"></at-pagination>
-
       </div>
+    </div>
+  </div> <!-- have data -->
 
-   </div> <!-- end row -->
+<div class="col-xs-12">
+  <h2>Authors</h2>
+  <ul>
+    <li>Lee M. Mendelowitz
+    <br><a href="mailto:Lee.Mendelowitz@gmail.com" target="_blank">Lee.Mendelowitz@gmail.com</a>
+    <br><a href="https://twitter.com/lmendy7" class="twitter-follow-button" data-show-count="false">Follow @lmendy7</a>
+      
+    </li>
+    <li>Joseph Paulson
+    <br><a href="mailto:jpaulson@umiacs.umd.edu" target="_blank">jpaulson@umiacs.umd.edu</a> 
+    <br><a href="https://twitter.com/dorageh" class="twitter-follow-button" data-show-count="false">Follow @dorageh</a>
 
+    </li>
 
-  </div>
-
-<!-- 
-  <div ng-controller="ExampleCtrl">
-    <nvd3-pie-chart
-        data="exampleData"
-          id="exampleId2"
-          width="550"
-          height="350"
-          x="xFunction()"
-          y="yFunction()"
-          showLabels="true">
-          <svg></svg>
-    </nvd3-pie-chart>
-  </div>
- -->
+  </ul>
+</div>
 
 </div>
 
+<!-- Google Analytics -->
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-61462133-1', 'auto');
+  ga('send', 'pageview');
+</script>
+
+
+<!-- Twitter -->
+<script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
 
 
 </body>
